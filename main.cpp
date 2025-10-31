@@ -1,5 +1,8 @@
-#include <GL/glut.h>
-
+#if defined(__APPLE__)
+    #include <GLUT/glut.h>
+#else
+    #include <GL/glut.h>
+#endif
 void display() {
     glClear(GL_COLOR_BUFFER_BIT);
 
@@ -9,7 +12,7 @@ void display() {
         glVertex2f(-0.5, -0.5);
         glVertex2f( 0.5,  0.5);
         glVertex2f(-0.5,  0.5);
-        glVertex2f( 0.5, -0.5);
+        glVertex2f( 0.5, -0.5); 
     glEnd();
 
     glPointSize(6.0f);
