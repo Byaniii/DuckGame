@@ -1,0 +1,22 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build freeglut app",
+            "type": "shell",
+            "command": "g++",
+            "args": [
+                "main.cpp",
+                "-o", "game.exe",
+                "-IC:/freeglut/freeglut/include",
+                "-LC:/freeglut/freeglut/lib/x64",
+                "-lfreeglut",
+                "-lopengl32"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        }
+    ]
+}
