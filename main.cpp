@@ -6,7 +6,7 @@
 void display() {
     glClear(GL_COLOR_BUFFER_BIT);
 
-    
+    helo world
     glColor3f(0.0, 1.0, 0.0);
     glBegin(GL_LINES);
         glVertex2f(-0.5, -0.5);
