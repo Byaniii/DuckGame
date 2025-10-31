@@ -1,12 +1,13 @@
+// This is to simultaneously accomodate macOS and Windows operating system
 #if defined(__APPLE__)
     #include <GLUT/glut.h>
 #else
     #include <GL/glut.h>
 #endif
+
 void display() {
     glClear(GL_COLOR_BUFFER_BIT);
 
-    helo world
     glColor3f(0.0, 1.0, 0.0);
     glBegin(GL_LINES);
         glVertex2f(-0.5, -0.5);
