@@ -113,6 +113,44 @@ static void drawHUD() {
     if (paused) drawText(winW/2 - 40, winH - 44, "[PAUSED]");
 }
 
+static void drawGrass() {
+    // Grass takes 40% of bottom space - single solid green shape
+    float grassHeight = winH * 0.4f;
+    float baseY = 0.f;  // Perfectly flat bottom at window bottom
+    float topY = baseY + grassHeight;
+    
+    std::srand(42); // Seed for consistent pattern
+    
+    // Single uniform bright medium green (like the image)
+    glColor3f(0.3f, 0.65f, 0.3f);
+    glBegin(GL_POLYGON);
+      // Perfectly flat bottom edge
+      glVertex2f(0, baseY);
+      glVertex2f(winW, baseY);
+      
+      // Create jagged, spiky top edge with irregular peaks and valleys
+      float spikeFrequency = 0.15f;
+      float spikeAmplitude = 20.f;
+      
+      // Draw jagged top from right to left
+      for (float x = winW; x >= 0; x -= 1.5f) {
+          // Combine multiple sine waves for irregular pattern
+          float wave1 = std::sin(x * spikeFrequency) * spikeAmplitude;
+          float wave2 = std::sin(x * spikeFrequency * 2.5f) * (spikeAmplitude * 0.6f);
+          float wave3 = std::sin(x * spikeFrequency * 4.2f) * (spikeAmplitude * 0.3f);
+          float randomVariation = frand(-10.f, 10.f);
+          float spikeY = topY + wave1 + wave2 + wave3 + randomVariation;
+          
+          // Keep spikes within reasonable bounds
+          if (spikeY < topY - 30.f) spikeY = topY - 30.f;
+          if (spikeY > topY + 30.f) spikeY = topY + 30.f;
+          glVertex2f(x, spikeY);
+      }
+    glEnd();
+    
+    std::srand((unsigned)std::time(nullptr)); // Reset seed
+}
+
 static void drawCrosshair() {
     glColor3f(1,1,1);
     glBegin(GL_LINES);
@@ -131,23 +169,8 @@ static void display() {
     glClearColor(0.22f, 0.42f, 0.85f, 1.f); // sky
     glClear(GL_COLOR_BUFFER_BIT);
 
-    // ground strip
-    glColor3f(0.2f, 0.55f, 0.25f);
-    glBegin(GL_QUADS);
-      glVertex2f(0, 0);
-      glVertex2f(winW, 0);
-      glVertex2f(winW, 80);
-      glVertex2f(0, 80);
-    glEnd();
-
-    // water
-    glColor3f(0.1f, 0.4f, 0.7f);
-    glBegin(GL_QUADS);
-      glVertex2f(0, 80);
-      glVertex2f(winW, 80);
-      glVertex2f(winW, 110);
-      glVertex2f(0, 110);
-    glEnd();
+    // Draw grass at the bottom
+    drawGrass();
 
     // Ducks
     for (const auto& d : ducks) if (d.alive) drawDuck(d);
@@ -276,6 +299,9 @@ int main(int argc, char** argv) {
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
     glutInitWindowSize(winW, winH);
     glutCreateWindow("Duck Shooter — freeglut");
+    
+    // Hide the system mouse cursor - only show crosshair
+    glutSetCursor(GLUT_CURSOR_NONE);
 
     glutDisplayFunc(display);
     glutReshapeFunc(reshape);
