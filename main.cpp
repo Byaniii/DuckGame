@@ -22,6 +22,8 @@ struct Duck {
 };
 
 static int winW = 960, winH = 540;
+static int origWinW = 960, origWinH = 540; // Store original window size
+static bool isFullscreen = false;
 static std::vector<Duck> ducks;
 static int score = 0;
 static int misses = 0;        // missed shots
@@ -102,10 +104,13 @@ static void drawText(float x, float y, const std::string& s, void* font = GLUT_B
 
 static void drawHUD() {
     glColor3f(1,1,1);
+    // Hint at the top
+    drawText(10, winH - 20, "Press F to fullscreen");
+    
     std::ostringstream ss;
     ss << "Score: " << score << "   Misses: " << misses << "   Lives: " << lives << "   Wave: " << wave;
-    drawText(10, winH - 24, ss.str());
-    if (paused) drawText(winW/2 - 40, winH - 24, "[PAUSED]");
+    drawText(10, winH - 44, ss.str());
+    if (paused) drawText(winW/2 - 40, winH - 44, "[PAUSED]");
 }
 
 static void drawCrosshair() {
@@ -240,9 +245,24 @@ static void motion(int x, int y) {
     crossX = x; crossY = winH - y;
 }
 
+static void toggleFullscreen() {
+    isFullscreen = !isFullscreen;
+    if (isFullscreen) {
+        // Store original window size before going fullscreen
+        origWinW = winW;
+        origWinH = winH;
+        glutFullScreen();
+    } else {
+        // Restore original window size
+        glutReshapeWindow(origWinW, origWinH);
+        glutPositionWindow(100, 100); // Position window on screen
+    }
+}
+
 static void keyboard(unsigned char key, int, int) {
     switch (key) {
         case 27: std::exit(0); break; // ESC
+        case 'f': case 'F': toggleFullscreen(); break;
         case 'p': case 'P': paused = !paused; break;
         case 'r': case 'R': resetGame(); spawnWave(4); break;
         default: break;
