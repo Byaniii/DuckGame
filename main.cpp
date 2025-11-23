@@ -1,4 +1,3 @@
-
 // Cross-platform GLUT include
 #if defined(__APPLE__)
   #include <GLUT/glut.h>
@@ -13,57 +12,143 @@
 #include <string>
 #include <sstream>
 
-// ---- Game State ----
 struct Duck {
-    float x, y;     // position
-    float vx, vy;   // velocity
-    float r;        // radius (hitbox & draw size)
+    float x, y;
+    float vx, vy;
+    float r;
     bool alive;
 };
 
-static int winW = 960, winH = 540;
-static int origWinW = 960, origWinH = 540; // Store original window size
-static bool isFullscreen = false;
-static std::vector<Duck> ducks;
-static int score = 0;
-static int misses = 0;        // missed shots
-static int lives = 3;         // lose a life when a duck escapes at top
-static int wave = 1;
-static bool gameOver = false;
-static bool paused = false;
-static int crossX = winW/2, crossY = winH/2; // mouse
+static int windowWidth = 960, windowHeight = 540;
+static int originalWindowWidth = 960, originalWindowHeight = 540;
+static bool isFullScreenMode = false;
+static std::vector<Duck> duckList;
+static int playerScore = 0;
+static int missedShots = 0;
+static int playerLives = 3;
+static int currentWave = 1;
+static bool isGameOver = false;
+static bool isPaused = false;
+static int crosshairX = windowWidth/2, crosshairY = windowHeight/2;
 
-// Utility random float in [a,b]
+// ---- Scene Objects ----
+static float cloudPositionOffset = 0.0f;
+static float cloudMovementSpeed = 20.0f;
+
+static float sunScaleFactor = 1.0f;
+static float sunCenterX, sunCenterY;
+static float sunRotationAngle = 0.0f;   
+
+// ---- VBOs for Grass and Sun ----
+static GLuint grassBufferObject = 0;
+static GLuint sunDiskBufferObject = 0;
+static GLuint sunRaysBufferObject = 0;
+static int grassVertexTotal = 0;
+static int sunDiskVertexTotal = 0;
+static int sunRaysVertexTotal = 0;
+
+// ---- VBO Initialization ----
+static void initGrassVBO() {
+    std::vector<float> verts;
+    float grassHeight = windowHeight * 0.4f;
+    float baseY = 0.f;
+    float topY = baseY + grassHeight;
+
+    verts.push_back(0); verts.push_back(baseY);
+    verts.push_back(windowWidth); verts.push_back(baseY);
+
+    float spikeFreq = 0.15f;
+    float spikeAmp = 22.f;
+
+    for (float x = windowWidth; x >= 0; x -= 1.25f) {
+        float y = topY +
+                  std::sin(x * spikeFreq) * spikeAmp +
+                  std::sin(x * spikeFreq * 2.5f) * (spikeAmp * 0.6f);
+        verts.push_back(x);
+        verts.push_back(y);
+    }
+
+    grassVertexTotal = verts.size() / 2;
+    glGenBuffers(1, &grassBufferObject);
+    glBindBuffer(GL_ARRAY_BUFFER, grassBufferObject);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+static void initSunDiskVBO() {
+    std::vector<float> verts;
+    int seg = 64;
+    verts.push_back(0); verts.push_back(0);
+    float r = 90.f;
+
+    for (int i = 0; i <= seg; i++) {
+        float th = (2.f * 3.1415926f * i) / seg;
+        verts.push_back(std::cos(th) * r);
+        verts.push_back(std::sin(th) * r);
+    }
+
+    sunDiskVertexTotal = verts.size() / 2;
+    glGenBuffers(1, &sunDiskBufferObject);
+    glBindBuffer(GL_ARRAY_BUFFER, sunDiskBufferObject);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+static void initSunRaysVBO() {
+    std::vector<float> verts;
+    for (int i = 0; i < 12; i++) {
+        float th = (2.f * 3.1415926f * i) / 12.f;
+        float x1 = std::cos(th) * 100;
+        float y1 = std::sin(th) * 100;
+        float x2 = std::cos(th) * 140;
+        float y2 = std::sin(th) * 140;
+        verts.push_back(x1); verts.push_back(y1);
+        verts.push_back(x2); verts.push_back(y2);
+    }
+    sunRaysVertexTotal = verts.size() / 2;
+    glGenBuffers(1, &sunRaysBufferObject);
+    glBindBuffer(GL_ARRAY_BUFFER, sunRaysBufferObject);
+    glBufferData(GL_ARRAY_BUFFER, verts.size() * sizeof(float), verts.data(), GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+// Utility random float
 static float frand(float a, float b) { return a + (b - a) * (std::rand() / (float)RAND_MAX); }
 
+// ------------------------------------------------------------
+// GAME LOGIC
+// ------------------------------------------------------------
+
 static void resetGame() {
-    ducks.clear();
-    score = 0; misses = 0; lives = 3; wave = 1; gameOver = false; paused = false;
+    duckList.clear();
+    playerScore = 0; missedShots = 0; playerLives = 3; currentWave = 1; isGameOver = false; isPaused = false;
 }
 
 static void spawnDuck() {
-    // Spawn near bottom with random side and velocity towards upper opposite
     Duck d{};
     d.r = frand(14.f, 22.f);
     d.alive = true;
 
     bool fromLeft = std::rand() % 2;
-    d.x = fromLeft ? -40.f : (winW + 40.f);
-    d.y = frand(40.f, 140.f);
+    d.x = fromLeft ? -40.f : (windowWidth + 40.f);
 
-    float speed = frand(120.f, 210.f) * (0.6f + 0.1f * wave); // scale with wave
-    float angle = frand(0.25f, 0.6f); // radians upward
+    float grassTop = windowHeight * 0.4f;
+    d.y = frand(grassTop * 0.2f, grassTop * 0.8f);
+
+    float speed = frand(120.f, 210.f) * (0.6f + 0.1f * currentWave);
+    float angle = frand(0.25f, 0.6f);
     d.vx = std::cos(angle) * speed * (fromLeft ? 1.f : -1.f);
     d.vy = std::sin(angle) * speed;
 
-    ducks.push_back(d);
+    duckList.push_back(d);
 }
 
 static void spawnWave(int n) {
     for (int i = 0; i < n; ++i) spawnDuck();
 }
 
-static void drawCircle(float cx, float cy, float r, int seg=24) {
+
+static void drawCircle(float cx, float cy, float r, int seg=64) {
     glBegin(GL_TRIANGLE_FAN);
     glVertex2f(cx, cy);
     for (int i = 0; i <= seg; ++i) {
@@ -73,30 +158,71 @@ static void drawCircle(float cx, float cy, float r, int seg=24) {
     glEnd();
 }
 
+// ---- Smooth Cloud ----
+static void drawCloud(float cx, float cy, float s) {
+    glColor3f(1,1,1);
+    glPushMatrix();
+    glTranslatef(cx, cy, 0);
+    glScalef(s, s, 1);
+
+    drawCircle(-25,   0, 22);
+    drawCircle(  0,  12, 28);
+    drawCircle( 28,  10, 22);
+    drawCircle( 10, -10, 20);
+
+    glPopMatrix();
+}
+
+// ---- Rotating Full-Circle Sun ----
+static void drawSun() {
+    if (sunDiskBufferObject == 0) initSunDiskVBO();
+    if (sunRaysBufferObject == 0) initSunRaysVBO();
+
+    glPushMatrix();
+    glTranslatef(sunCenterX, sunCenterY, 0);
+    glScalef(sunScaleFactor, sunScaleFactor, 1);
+    glRotatef(sunRotationAngle, 0, 0, 1);
+
+    glColor3f(1.0f, 0.78f, 0.0f);
+    glBindBuffer(GL_ARRAY_BUFFER, sunDiskBufferObject);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glVertexPointer(2, GL_FLOAT, 0, 0);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, sunDiskVertexTotal);
+
+    glBindBuffer(GL_ARRAY_BUFFER, sunRaysBufferObject);
+    glVertexPointer(2, GL_FLOAT, 0, 0);
+    glDrawArrays(GL_LINES, 0, sunRaysVertexTotal);
+
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glPopMatrix();
+}
+
+// ---- Duck drawing ----
 static void drawDuck(const Duck& d) {
-    // Body
     glColor3f(0.9f, 0.7f, 0.2f);
     drawCircle(d.x, d.y, d.r);
-    // Head
+
     glColor3f(0.2f, 0.7f, 0.2f);
     drawCircle(d.x + (d.vx>0? d.r*0.9f : -d.r*0.9f), d.y + d.r*0.4f, d.r*0.55f);
-    // Beak
+
     glColor3f(0.95f, 0.5f, 0.05f);
     glBegin(GL_TRIANGLES);
-      float dir = (d.vx>0? 1.f : -1.f);
-      glVertex2f(d.x + dir*(d.r*1.5f), d.y + d.r*0.45f);
-      glVertex2f(d.x + dir*(d.r*2.1f), d.y + d.r*0.35f);
-      glVertex2f(d.x + dir*(d.r*1.9f), d.y + d.r*0.55f);
+        float dir = (d.vx>0? 1.f : -1.f);
+        glVertex2f(d.x + dir*(d.r*1.5f), d.y + d.r*0.45f);
+        glVertex2f(d.x + dir*(d.r*2.0f), d.y + d.r*0.35f);
+        glVertex2f(d.x + dir*(d.r*1.8f), d.y + d.r*0.55f);
     glEnd();
-    // Wing
+
     glColor3f(0.4f, 0.3f, 0.2f);
     glBegin(GL_TRIANGLES);
-      glVertex2f(d.x, d.y + d.r*0.2f);
-      glVertex2f(d.x - d.r*0.8f, d.y);
-      glVertex2f(d.x + d.r*0.3f, d.y - d.r*0.9f);
+        glVertex2f(d.x, d.y + d.r*0.2f);
+        glVertex2f(d.x - d.r*0.8f, d.y);
+        glVertex2f(d.x + d.r*0.3f, d.y - d.r*0.9f);
     glEnd();
 }
 
+// ---- HUD ----
 static void drawText(float x, float y, const std::string& s, void* font = GLUT_BITMAP_HELVETICA_18) {
     glRasterPos2f(x, y);
     for (char c : s) glutBitmapCharacter(font, c);
@@ -104,203 +230,252 @@ static void drawText(float x, float y, const std::string& s, void* font = GLUT_B
 
 static void drawHUD() {
     glColor3f(1,1,1);
-    // Hint at the top
-    drawText(10, winH - 20, "Press F to fullscreen");
-    
+    drawText(10, windowHeight - 20, "Press F to fullscreen");
+
     std::ostringstream ss;
-    ss << "Score: " << score << "   Misses: " << misses << "   Lives: " << lives << "   Wave: " << wave;
-    drawText(10, winH - 44, ss.str());
-    if (paused) drawText(winW/2 - 40, winH - 44, "[PAUSED]");
+    ss << "Score: " << playerScore << "   Misses: " << missedShots << "   Lives: " << playerLives << "   Wave: " << currentWave;
+    drawText(10, windowHeight - 44, ss.str());
 }
 
+// ---- Grass ----
 static void drawGrass() {
-    // Grass takes 40% of bottom space - single solid green shape
-    float grassHeight = winH * 0.4f;
-    float baseY = 0.f;  // Perfectly flat bottom at window bottom
-    float topY = baseY + grassHeight;
-    
-    std::srand(42); // Seed for consistent pattern
-    
-    // Single uniform bright medium green (like the image)
+    if (grassBufferObject == 0) initGrassVBO();
     glColor3f(0.3f, 0.65f, 0.3f);
-    glBegin(GL_POLYGON);
-      // Perfectly flat bottom edge
-      glVertex2f(0, baseY);
-      glVertex2f(winW, baseY);
-      
-      // Create jagged, spiky top edge with irregular peaks and valleys
-      float spikeFrequency = 0.15f;
-      float spikeAmplitude = 20.f;
-      
-      // Draw jagged top from right to left
-      for (float x = winW; x >= 0; x -= 1.5f) {
-          // Combine multiple sine waves for irregular pattern
-          float wave1 = std::sin(x * spikeFrequency) * spikeAmplitude;
-          float wave2 = std::sin(x * spikeFrequency * 2.5f) * (spikeAmplitude * 0.6f);
-          float wave3 = std::sin(x * spikeFrequency * 4.2f) * (spikeAmplitude * 0.3f);
-          float randomVariation = frand(-10.f, 10.f);
-          float spikeY = topY + wave1 + wave2 + wave3 + randomVariation;
-          
-          // Keep spikes within reasonable bounds
-          if (spikeY < topY - 30.f) spikeY = topY - 30.f;
-          if (spikeY > topY + 30.f) spikeY = topY + 30.f;
-          glVertex2f(x, spikeY);
-      }
-    glEnd();
-    
-    std::srand((unsigned)std::time(nullptr)); // Reset seed
+    glBindBuffer(GL_ARRAY_BUFFER, grassBufferObject);
+    glEnableClientState(GL_VERTEX_ARRAY);
+    glVertexPointer(2, GL_FLOAT, 0, 0);
+    glDrawArrays(GL_POLYGON, 0, grassVertexTotal);
+    glDisableClientState(GL_VERTEX_ARRAY);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
 }
 
-static void drawCrosshair() {
-    glColor3f(1,1,1);
-    glBegin(GL_LINES);
-      glVertex2f(crossX-12, crossY); glVertex2f(crossX+12, crossY);
-      glVertex2f(crossX, crossY-12); glVertex2f(crossX, crossY+12);
-    glEnd();
-    glBegin(GL_LINE_LOOP);
-      for (int i=0;i<24;++i){
-        float th = i * (2.f*3.1415926f/24.f);
-        glVertex2f(crossX + std::cos(th)*14.f, crossY + std::sin(th)*14.f);
-      }
-    glEnd();
-}
+// ------------------------------------------------------------
+// DISPLAY
+// ------------------------------------------------------------
 
 static void display() {
-    glClearColor(0.22f, 0.42f, 0.85f, 1.f); // sky
+    glClearColor(0.22f, 0.42f, 0.85f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    // Draw grass at the bottom
+    // Clouds
+    glPushMatrix();
+    glTranslatef(cloudPositionOffset, 0, 0);
+    drawCloud(150, windowHeight - 140, 1.3f);
+    drawCloud(380, windowHeight - 115, 1.1f);
+    drawCloud(600, windowHeight - 135, 1.4f);
+    // Additional clouds
+    drawCloud(80,  windowHeight - 160, 1.1f);
+    drawCloud(450, windowHeight - 180, 1.6f);
+    drawCloud(780, windowHeight - 150, 1.3f);
+    glPopMatrix();
+
+    // Sun (background)
+    drawSun();
+
+    // Grass hides half of the sun
     drawGrass();
 
     // Ducks
-    for (const auto& d : ducks) if (d.alive) drawDuck(d);
+    for (const auto& d : duckList)
+        if (d.alive) drawDuck(d);
 
     drawHUD();
-    drawCrosshair();
 
-    // Game over overlay
-    if (gameOver) {
-        glColor3f(0,0,0);
-        glBegin(GL_QUADS);
-          glVertex2f(0,0); glVertex2f(winW,0); glVertex2f(winW,winH); glVertex2f(0,winH);
-        glEnd();
-        glColor3f(1,1,1);
-        drawText(winW/2 - 70, winH/2 + 10, "GAME OVER", GLUT_BITMAP_HELVETICA_18);
-        std::ostringstream s; s << "Final score: " << score << "  (press R to restart)";
-        drawText(winW/2 - 120, winH/2 - 14, s.str());
-    }
+    // Crosshair
+    glColor3f(1,1,1);
+    glBegin(GL_LINES);
+        glVertex2f(crosshairX-12, crosshairY); glVertex2f(crosshairX+12, crosshairY);
+        glVertex2f(crosshairX, crosshairY-12); glVertex2f(crosshairX, crosshairY+12);
+    glEnd();
+
+    // Circle outline for gun crosshair
+    glBegin(GL_LINE_LOOP);
+        for (int i = 0; i < 32; i++) {
+            float th = i * (2.f * 3.1415926f / 32.f);
+            glVertex2f(crosshairX + std::cos(th) * 14.f,
+                       crosshairY + std::sin(th) * 14.f);
+        }
+    glEnd();
 
     glutSwapBuffers();
 }
 
+// ------------------------------------------------------------
+// UPDATE
+// ------------------------------------------------------------
+
 static void update(int ms) {
-    if (!paused && !gameOver) {
-        const float dt = ms / 1000.f;
-        for (auto &d : ducks) if (d.alive) {
+    if (!isPaused && !isGameOver) {
+        float dt = ms / 1000.f;
+
+        cloudPositionOffset += cloudMovementSpeed * dt;
+        if (cloudPositionOffset > windowWidth + 200) cloudPositionOffset = -200;
+
+        for (auto &d : duckList) if (d.alive) {
             d.x += d.vx * dt;
+            d.y += d.vy * dt;
 
-            // Smooth bobbing motion
-            float bobSpeed = 2.0f;
-            float bobAmount = 20.0f;
-            d.y += d.vy * dt + std::sin(glutGet(GLUT_ELAPSED_TIME) * 0.002f + (&d - &ducks[0])) * 0.3f;
-
-            // Keep vertical velocity steady (so ducks float instead of falling)
-            d.vy = bobAmount * std::sin(glutGet(GLUT_ELAPSED_TIME) * 0.001f);
-
-            // bounce off side walls for fun
             if (d.x < -60 && d.vx < 0) d.vx *= -1;
-            if (d.x > winW + 60 && d.vx > 0) d.vx *= -1;
+            if (d.x > windowWidth + 60 && d.vx > 0) d.vx *= -1;
 
-            // escaped at top
-            if (d.y > winH + 40) {
+            if (d.y > windowHeight + 40) {
                 d.alive = false;
-                lives -= 1;
-                if (lives <= 0) gameOver = true;
+                playerLives--;
+                if (playerLives <= 0) isGameOver = true;
             }
         }
 
-        // Remove dead ducks when all cleared -> next wave
-        bool anyAlive = false;
-        for (const auto &d : ducks) if (d.alive) { anyAlive = true; break; }
-        if (!anyAlive) {
-            wave += 1;
-            spawnWave(std::min(3 + wave, 12));
+        bool alive = false;
+        for (auto &d : duckList) if (d.alive) alive = true;
+
+        if (!alive) {
+            currentWave++;
+            spawnWave(std::min(3 + currentWave, 12));
         }
     }
 
     glutPostRedisplay();
-    glutTimerFunc(ms, update, ms);
+    glutTimerFunc(16, update, 16);
 }
+
+// ------------------------------------------------------------
+// RESHAPE
+// ------------------------------------------------------------
 
 static void reshape(int w, int h) {
-    winW = w; winH = h;
+    windowWidth = w;
+    windowHeight = h;
+
     glViewport(0,0,w,h);
-    glMatrixMode(GL_PROJECTION);
+    glMatrixMode(GL_PROJECTION); 
     glLoadIdentity();
     gluOrtho2D(0, w, 0, h);
-    glMatrixMode(GL_MODELVIEW);
+    glMatrixMode(GL_MODELVIEW); 
     glLoadIdentity();
+
+    sunCenterX = windowWidth * 0.5f;
+    sunCenterY = windowHeight * 0.4f - 20;
+
+    // --- IMPORTANT FIX ---
+    // Force VBO rebuild on resize / fullscreen toggle
+    grassBufferObject = 0;
+    sunDiskBufferObject = 0;
+    sunRaysBufferObject = 0;
 }
+
+// ------------------------------------------------------------
+// SHOOTING
+// ------------------------------------------------------------
 
 static void shootAt(int sx, int sy) {
-    if (gameOver) return;
+    if (isGameOver) return;
+
     bool hit = false;
-    for (auto &d : ducks) if (d.alive) {
+    for (auto &d : duckList) if (d.alive) {
         float dx = sx - d.x;
         float dy = sy - d.y;
-        float dist2 = dx*dx + dy*dy;
-        float R = d.r * 1.0f; // hitbox scale
-        if (dist2 <= R*R) { d.alive = false; score += 10; hit = true; }
+        if (dx*dx + dy*dy <= d.r*d.r) {
+            d.alive = false;
+            playerScore += 10;
+            hit = true;
+        }
     }
-    if (!hit) misses += 1;
+    if (!hit) missedShots++;
 }
+
+// ------------------------------------------------------------
+// MOUSE
+// ------------------------------------------------------------
 
 static void mouse(int button, int state, int x, int y) {
-    // GLUT gives y from top; our ortho is bottom-left origin
-    int oy = winH - y;
-    crossX = x; crossY = oy;
-    if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN) {
-        shootAt(x, oy);
+    int oy = windowHeight - y;
+    crosshairX = x;
+    crosshairY = oy;
+
+    // Scroll wheel scales sun
+    if (button == 3 && state == GLUT_DOWN) sunScaleFactor += 0.1f;
+    if (button == 4 && state == GLUT_DOWN) {
+        sunScaleFactor -= 0.1f;
+        if (sunScaleFactor < 0.3f) sunScaleFactor = 0.3f;
     }
+
+    // RIGHT CLICK ROTATES SUN
+    if (button == GLUT_RIGHT_BUTTON && state == GLUT_DOWN) {
+        sunRotationAngle += 15.0f;        // rotate by 15°
+        if (sunRotationAngle >= 360.0f)   // wrap angle
+            sunRotationAngle -= 360.0f;
+    }
+
+    // LEFT CLICK SHOOTS
+    if (button == GLUT_LEFT_BUTTON && state == GLUT_DOWN)
+        shootAt(x, oy);
 }
 
+// ------------------------------------------------------------
+// PASSIVE MOUSE MOTION (for crosshair tracking)
+// ------------------------------------------------------------
 static void motion(int x, int y) {
-    crossX = x; crossY = winH - y;
+    crosshairX = x;
+    crosshairY = windowHeight - y;
 }
+// ------------------------------------------------------------
+// KEYBOARD
+// ------------------------------------------------------------
 
 static void toggleFullscreen() {
-    isFullscreen = !isFullscreen;
-    if (isFullscreen) {
-        // Store original window size before going fullscreen
-        origWinW = winW;
-        origWinH = winH;
+    isFullScreenMode = !isFullScreenMode;
+    if (isFullScreenMode) {
+        originalWindowWidth = windowWidth;
+        originalWindowHeight = windowHeight;
         glutFullScreen();
     } else {
-        // Restore original window size
-        glutReshapeWindow(origWinW, origWinH);
-        glutPositionWindow(100, 100); // Position window on screen
+        glutReshapeWindow(originalWindowWidth, originalWindowHeight);
+        glutPositionWindow(100, 100);
     }
 }
 
 static void keyboard(unsigned char key, int, int) {
     switch (key) {
-        case 27: std::exit(0); break; // ESC
+        case 27: exit(0); break;
         case 'f': case 'F': toggleFullscreen(); break;
-        case 'p': case 'P': paused = !paused; break;
+        case 'p': case 'P': isPaused = !isPaused; break;
         case 'r': case 'R': resetGame(); spawnWave(4); break;
-        default: break;
+        case 'w':
+        case 'W':
+            sunScaleFactor += 0.1f;
+            break;
+        case 's':
+        case 'S':
+            sunScaleFactor -= 0.1f;
+            if (sunScaleFactor < 0.3f) sunScaleFactor = 0.3f;
+            break;
+        default:
+            break;
     }
 }
+
+// GLUT special keys handler for UP/DOWN arrows
+static void specialKeys(int key, int x, int y) {
+    if (key == GLUT_KEY_UP) {
+        sunScaleFactor += 0.1f;
+    }
+    if (key == GLUT_KEY_DOWN) {
+        sunScaleFactor -= 0.1f;
+        if (sunScaleFactor < 0.3f) sunScaleFactor = 0.3f;
+    }
+}
+
+// ------------------------------------------------------------
+// MAIN
+// ------------------------------------------------------------
 
 int main(int argc, char** argv) {
     std::srand((unsigned)std::time(nullptr));
 
     glutInit(&argc, argv);
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
-    glutInitWindowSize(winW, winH);
+    glutInitWindowSize(windowWidth, windowHeight);
     glutCreateWindow("Duck Shooter — freeglut");
-    
-    // Hide the system mouse cursor - only show crosshair
     glutSetCursor(GLUT_CURSOR_NONE);
 
     glutDisplayFunc(display);
@@ -308,13 +483,14 @@ int main(int argc, char** argv) {
     glutMouseFunc(mouse);
     glutPassiveMotionFunc(motion);
     glutKeyboardFunc(keyboard);
+    glutSpecialFunc(specialKeys);
 
-    reshape(winW, winH);
-
+    reshape(windowWidth, windowHeight);
     resetGame();
     spawnWave(4);
 
-    glutTimerFunc(16, update, 16); // ~60 FPS
+    glutTimerFunc(16, update, 16);
     glutMainLoop();
+
     return 0;
 }
